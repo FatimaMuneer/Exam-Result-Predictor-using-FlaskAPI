@@ -1,13 +1,9 @@
 import os
 import textwrap
 
-import requests
+import joblib
+import numpy as np
 import streamlit as st
-
-# The API address can be overridden without touching the code:
-#   set SCHOLARIQ_API_URL=http://your-server:8000
-API_URL = os.getenv("SCHOLARIQ_API_URL", "http://127.0.0.1:8000")
-REQUEST_TIMEOUT = 5  # seconds
 
 # --- Page configuration ---
 st.set_page_config(
@@ -16,6 +12,22 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="collapsed",
 )
+
+
+# --- Load Model Directly ---
+@st.cache_resource
+def load_predictor_model():
+    return joblib.load("model.pkl")
+
+
+try:
+    model = load_predictor_model()
+except Exception as e:
+    st.error(
+        "🔌 Could not find or load `model.pkl`. Please verify that `model.pkl` is pushed to your GitHub repository root."
+    )
+    st.stop()
+
 
 # --- Styling: soft pastel palette, rounded cards, gentle motion ---
 STYLE = """
@@ -49,7 +61,7 @@ html, body, [class*="css"], .stApp {
 header[data-testid="stHeader"] { background: transparent; }
 #MainMenu, footer { visibility: hidden; }
 
-/* Make sure widget labels stay readable on the light background */
+/* Widget labels readability */
 .stApp label, .stApp [data-testid="stWidgetLabel"] p { color: var(--ink) !important; font-weight: 600; }
 .stApp [data-testid="stTickBarMin"], .stApp [data-testid="stTickBarMax"] { color: var(--muted); }
 
@@ -137,13 +149,15 @@ div.stButton > button:first-child:active { transform: translateY(0); }
 
 
 def html(markup: str) -> None:
-    """Render raw HTML. Indentation and blank lines are stripped so Markdown never turns it into a code block."""
-    cleaned = "\n".join(line.strip() for line in textwrap.dedent(markup).splitlines() if line.strip())
+    cleaned = "\n".join(
+        line.strip()
+        for line in textwrap.dedent(markup).splitlines()
+        if line.strip()
+    )
     st.markdown(cleaned, unsafe_allow_html=True)
 
 
 def card():
-    """A bordered container (falls back to a plain one on older Streamlit versions)."""
     try:
         return st.container(border=True)
     except TypeError:
@@ -177,11 +191,19 @@ def score_band(score: float) -> str:
 def friendly_tips(hours: float, score: float) -> list[str]:
     tips = []
     if hours < 3:
-        tips.append("⏰ Add a steady 1–2 focused hours a day. Consistency beats last-minute cramming.")
+        tips.append(
+            "⏰ Add a steady 1–2 focused hours a day. Consistency beats last-minute cramming."
+        )
     if score < 50:
-        tips.append("🧩 Revisit the topics that cost you marks last time and redo a few past questions.")
-    tips.append("🧠 Quiz yourself instead of re-reading. Active recall helps knowledge stick.")
-    tips.append("💤 Protect your sleep and take short breaks. Rested minds learn faster.")
+        tips.append(
+            "🧩 Revisit the topics that cost you marks last time and redo a few past questions."
+        )
+    tips.append(
+        "🧠 Quiz yourself instead of re-reading. Active recall helps knowledge stick."
+    )
+    tips.append(
+        "💤 Protect your sleep and take short breaks. Rested minds learn faster."
+    )
     return tips
 
 
@@ -199,7 +221,9 @@ def render_result(result: dict, study_hours: float, prev_score: float) -> None:
         kind, emoji, ring = "risk", "🌱", "#fb923c"
         title = "Predicted outcome: AT RISK"
         message = "Additional targeted review and focused hours are recommended to reach passing thresholds."
-        items = "".join(f"<li>{t}</li>" for t in friendly_tips(study_hours, prev_score))
+        items = "".join(
+            f"<li>{t}</li>" for t in friendly_tips(study_hours, prev_score)
+        )
         tips_html = f'<div class="tips"><div class="tips-title">💡 Friendly study tips</div><ul>{items}</ul></div>'
 
     html(
@@ -224,7 +248,7 @@ def render_result(result: dict, study_hours: float, prev_score: float) -> None:
         st.json(result)
 
 
-# ------------------------------------------------------------------ page ---
+# ------------------------------------------------------------------ Page ---
 html(STYLE)
 
 html(
@@ -260,7 +284,7 @@ with card():
             help="Benchmark grade achieved in previous examination cycle",
         )
 
-# Live summary of the current inputs
+# Live summary of current inputs
 html(
     f"""
     <div class="chips">
@@ -283,29 +307,22 @@ st.write("")
 if st.button("✨ Analyze my academic outcome", use_container_width=True):
     try:
         with st.spinner("Crunching the numbers…"):
-            res = requests.post(
-                f"{API_URL}/predict",
-                json={"study_hours": float(study_hours), "prev_score": float(prev_score)},
-                timeout=REQUEST_TIMEOUT,
-            )
+            # Direct model inference (no localhost server needed)
+            input_data = np.array([[float(study_hours), float(prev_score)]])
+            prediction = int(model.predict(input_data)[0])
+            probabilities = model.predict_proba(input_data)[0]
+            confidence = float(probabilities[prediction])
 
-        if res.status_code == 200:
-            try:
-                render_result(res.json(), study_hours, prev_score)
-            except (ValueError, KeyError, TypeError):
-                st.warning("⚠️ The service replied, but the answer was not in the expected format.")
-        else:
-            st.warning(f"⚠️ Service returned error code {res.status_code}")
+            result_payload = {
+                "prediction": prediction,
+                "result_label": "Pass" if prediction == 1 else "Fail",
+                "confidence": round(confidence, 3),
+            }
 
-    except requests.exceptions.ConnectionError:
-        st.error(
-            "🔌 Unable to reach the API server. Make sure `uvicorn main:app --reload` "
-            f"is running on `{API_URL}`."
-        )
-    except requests.exceptions.Timeout:
-        st.warning("⏳ The prediction service took too long to respond. Please try again.")
-    except requests.exceptions.RequestException as error:
-        st.error(f"Something went wrong while contacting the service: {error}")
+            render_result(result_payload, study_hours, prev_score)
+
+    except Exception as error:
+        st.error(f"Something went wrong while generating the outcome: {error}")
 
 html(
     """
