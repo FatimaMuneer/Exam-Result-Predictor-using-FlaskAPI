@@ -1,11 +1,9 @@
 import os
 import textwrap
 
-#import requests
+import joblib
+import numpy as np
 import streamlit as st
-
-# --- 1. PASTE YOUR NGROK URL HERE ---
-API_URL = "https://vista-vineyard-gullible.ngrok-free.dev"
 
 # --- Page configuration ---
 st.set_page_config(
@@ -14,6 +12,21 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="collapsed",
 )
+
+
+# --- Load Model Directly ---
+@st.cache_resource
+def load_predictor_model():
+    return joblib.load("model.pkl")
+
+
+try:
+    model = load_predictor_model()
+except Exception as e:
+    st.error(
+        "🔌 Could not find or load `model.pkl`. Please verify that `model.pkl` is pushed to your GitHub repository root."
+    )
+    st.stop()
 
 # --- Styling: soft pastel palette, rounded cards, gentle motion ---
 STYLE = """
@@ -272,27 +285,23 @@ html(
 
 st.write("")
 
-# --- 2. PREDICT BUTTON USING NGROK ---
+# Direct In-Memory Model Prediction
 if st.button("✨ Analyze my academic outcome", use_container_width=True):
     try:
         with st.spinner("Crunching the numbers…"):
-            # Header to bypass ngrok free tier browser warning
-            headers = {"ngrok-skip-browser-warning": "true"}
+            input_data = np.array([[float(study_hours), float(prev_score)]])
+            prediction = int(model.predict(input_data)[0])
+            probabilities = model.predict_proba(input_data)[0]
+            confidence = float(probabilities[prediction])
 
-            res = requests.post(
-                f"{API_URL}/predict",
-                json={"study_hours": float(study_hours), "prev_score": float(prev_score)},
-                headers=headers,
-                timeout=10,
-            )
+            result_payload = {
+                "prediction": prediction,
+                "result_label": "Pass" if prediction == 1 else "Fail",
+                "confidence": round(confidence, 3),
+            }
 
-        if res.status_code == 200:
-            render_result(res.json(), study_hours, prev_score)
-        else:
-            st.warning(f"⚠️ API returned status code {res.status_code}")
+            render_result(result_payload, study_hours, prev_score)
 
-    except requests.exceptions.ConnectionError:
-        st.error(f"🔌 Could not connect to ngrok tunnel at `{API_URL}`. Make sure ngrok is running!")
     except Exception as error:
         st.error(f"Something went wrong while generating the outcome: {error}")
 
