@@ -1,7 +1,7 @@
 import os
 import textwrap
 
-import requests
+#import requests
 import streamlit as st
 
 # --- 1. PASTE YOUR NGROK URL HERE ---
