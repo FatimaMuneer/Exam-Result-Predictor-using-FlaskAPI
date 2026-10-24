@@ -1,6 +1,4 @@
-
-uvicorn
+streamlit
 scikit-learn
 joblib
 numpy
-streamlit
